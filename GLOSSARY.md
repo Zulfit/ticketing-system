@@ -5,16 +5,20 @@ Staff report a maintenance problem. An admin assigns one technician from the dep
 ## People
 
 **Admin**:
-A user who can see every ticket, manage users and departments, assign technicians, and reject work that is not valid. An admin is never an assignee.
+A user who can see every ticket, manage users and departments, assign technicians, and reject work that is not valid. An admin has no department and is never an assignee.
 _Avoid_: dispatcher, manager
 
 **Technician**:
-A user who belongs to one department and can see only the tickets assigned to them.
+A user who belongs to one department and can see only the tickets assigned to them. Only a technician has a department.
 _Avoid_: engineer, worker
 
 **Reporter**:
-A user whose role is to create tickets and follow tickets they created. A user is a reporter, a technician, or an admin, and only one of these.
+A user whose role is to create tickets and follow the tickets they created. A user is a reporter, a technician, or an admin, and only one of these. A reporter has no department.
 _Avoid_: staff, requester, end user
+
+**Creator**:
+The user who filed a ticket. The creator stays on that ticket even if their role later changes.
+_Avoid_: reporter
 
 **Assignee**:
 The technician currently responsible for a ticket. A ticket has at most one.
@@ -27,11 +31,19 @@ One reported maintenance problem. It has one creator, one department, and at mos
 _Avoid_: job, work order, request
 
 **Department**:
-The group responsible for one category of maintenance. A ticket is routed to one department, and only a technician in that department may be assigned to it. Other technicians in the department do not see the ticket.
+The group responsible for one category of maintenance. A ticket is routed to one department, and only a technician in that department may be assigned to it. Other technicians in the department do not see the ticket. Moving a ticket to another department also names the new assignee.
 _Avoid_: team, queue
 
+**Comment**:
+A remark on a ticket by the creator, the current assignee, or an admin, while the ticket is open, assigned, or in progress.
+_Avoid_: note, message
+
+**Photo**:
+An image the current assignee adds while the ticket is assigned, in progress, or resolved. An admin may remove one in any state.
+_Avoid_: attachment, file
+
 **Priority**:
-How urgent the ticket's creator says it is. It does not decide who works the ticket, and it does not set a deadline.
+How urgent an admin says the ticket is. It does not decide who works the ticket, and it does not set a deadline.
 _Avoid_: severity, SLA
 
 ## Outcomes
