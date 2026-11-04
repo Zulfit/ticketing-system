@@ -16,6 +16,9 @@ coverage/
 .env.*
 !.env.example
 
+# generated Prisma client
+api/src/generated/
+
 # logs
 *.log
 npm-debug.log*

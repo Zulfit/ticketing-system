@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  REPORTER
+  TECHNICIAN
+  ADMIN
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  REJECTED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Department {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  users   User[]
+  tickets Ticket[]
+}
+
+model User {
+  id           Int         @id @default(autoincrement())
+  name         String
+  email        String      @unique
+  password     String
+  role         Role        @default(REPORTER)
+  departmentId Int?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  reported     Ticket[]    @relation("Reporter")
+  assigned     Ticket[]    @relation("Assignee")
+  comments     Comment[]
+  createdAt    DateTime    @default(now())
+}
+
+model Ticket {
+  id           Int             @id @default(autoincrement())
+  title        String
+  description  String
+  location     String
+  priority     Priority        @default(MEDIUM)
+  status       TicketStatus    @default(OPEN)
+  departmentId Int
+  department   Department      @relation(fields: [departmentId], references: [id])
+  reporterId   Int
+  reporter     User            @relation("Reporter", fields: [reporterId], references: [id])
+  assigneeId   Int?
+  assignee     User?           @relation("Assignee", fields: [assigneeId], references: [id])
+  comments     Comment[]
+  attachments  Attachment[]
+  history      StatusHistory[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  resolvedAt   DateTime?
+
+  @@index([status])
+  @@index([departmentId, status])
+}
+
+model Comment {
+  id        Int      @id @default(autoincrement())
+  body      String
+  ticketId  Int
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  url       String
+  fileName  String
+  ticketId  Int
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+}
+
+model StatusHistory {
+  id          Int           @id @default(autoincrement())
+  ticketId    Int
+  ticket      Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromStatus  TicketStatus?
+  toStatus    TicketStatus
+  changedById Int
+  note        String?
+  createdAt   DateTime      @default(now())
+}
