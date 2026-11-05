@@ -64,6 +64,12 @@ export function SessionScreen() {
         <h1 className="text-2xl font-semibold tracking-tight">Signed in</h1>
         <p className="text-lg">{user.name}</p>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">{roleLabel(user.role)}</p>
+        <Link
+          href="/departments"
+          className="flex h-11 items-center justify-center rounded-full border border-zinc-300 px-5 font-medium dark:border-zinc-700"
+        >
+          Departments
+        </Link>
         <button
           type="button"
           onClick={signOut}
