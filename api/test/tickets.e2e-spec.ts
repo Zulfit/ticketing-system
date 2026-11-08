@@ -419,6 +419,82 @@ describe('Tickets', () => {
     expect(seenByAssignee.body).toEqual(assigned.body);
   });
 
+  it('lists an assigned ticket for that technician and leaves other tickets off the list', async () => {
+    const { seed } = await import('../prisma/seed.js');
+    await seed(app.get(PrismaService));
+
+    const reporter = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'reporter@example.com', password: 'password' })
+      .expect(200);
+    const reporterToken = reporter.body.access_token as string;
+
+    const departments = await request(app.getHttpServer())
+      .get('/api/departments')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .expect(200);
+    const facilities = departments.body.find(
+      (department: { name: string }) => department.name === 'Facilities',
+    );
+
+    const created = await request(app.getHttpServer())
+      .post('/api/tickets')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .send({
+        title: 'Leaking tap',
+        description: 'Drips all night',
+        location: 'Block A kitchen',
+        departmentId: facilities.id,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/tickets')
+      .set('Authorization', `Bearer ${reporterToken}`)
+      .send({
+        title: 'Broken light',
+        description: 'Stays dark',
+        location: 'Block A hall',
+        departmentId: facilities.id,
+      })
+      .expect(201);
+
+    const technician = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'technician@example.com', password: 'password' })
+      .expect(200);
+    const technicianToken = technician.body.access_token as string;
+    const assignee = await request(app.getHttpServer())
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .expect(200);
+
+    const admin = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'admin@example.com', password: 'password' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${created.body.id}/assign`)
+      .set('Authorization', `Bearer ${admin.body.access_token}`)
+      .send({ assigneeId: assignee.body.id })
+      .expect(200);
+
+    const listed = await request(app.getHttpServer())
+      .get('/api/tickets')
+      .set('Authorization', `Bearer ${technicianToken}`)
+      .expect(200);
+
+    expect(listed.body).toEqual([
+      expect.objectContaining({
+        id: created.body.id,
+        title: 'Leaking tap',
+        status: 'ASSIGNED',
+        assignee: { id: assignee.body.id, name: 'Taylor Technician' },
+      }),
+    ]);
+  });
+
   it('refuses a technician from another department', async () => {
     const { seed } = await import('../prisma/seed.js');
     await seed(app.get(PrismaService));

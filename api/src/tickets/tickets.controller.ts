@@ -20,8 +20,8 @@ export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
 
   @Get()
-  list() {
-    return [];
+  list(@CurrentUser() user: AuthUser) {
+    return this.tickets.list(user);
   }
 
   @Roles(Role.ADMIN)

@@ -133,6 +133,15 @@ export class TicketsService {
     return this.toPublicTicket(updated);
   }
 
+  async list(user: AuthUser) {
+    const tickets = await this.prisma.ticket.findMany({
+      where: visibleWhere(user),
+      orderBy: { createdAt: 'desc' },
+      select: ticketSelect,
+    });
+    return Promise.all(tickets.map((ticket) => this.toPublicTicket(ticket)));
+  }
+
   async findOne(user: AuthUser, id: number) {
     const ticket = await this.prisma.ticket.findUnique({
       where: { id },
@@ -172,6 +181,12 @@ export class TicketsService {
       }),
     };
   }
+}
+
+function visibleWhere(user: AuthUser) {
+  if (user.role === Role.ADMIN) return {};
+  if (user.role === Role.TECHNICIAN) return { assigneeId: user.userId };
+  return { reporterId: user.userId };
 }
 
 function canSee(
