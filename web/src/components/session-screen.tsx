@@ -11,8 +11,24 @@ import {
   setToken,
 } from '@/lib/api';
 
+type TicketSummary = {
+  id: number;
+  title: string;
+  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'REJECTED';
+};
+
+const statusLabels: Record<TicketSummary['status'], string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  IN_PROGRESS: 'In progress',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed',
+  REJECTED: 'Rejected',
+};
+
 export function SessionScreen() {
   const [user, setUser] = useState<CurrentUser | null>(null);
+  const [tickets, setTickets] = useState<TicketSummary[]>([]);
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,8 +40,11 @@ export function SessionScreen() {
       setReady(true);
       return;
     }
-    api<CurrentUser>('/auth/me')
-      .then(setUser)
+    Promise.all([api<CurrentUser>('/auth/me'), api<TicketSummary[]>('/tickets')])
+      .then(([current, listed]) => {
+        setUser(current);
+        setTickets(listed);
+      })
       .catch(() => clearToken())
       .finally(() => setReady(true));
   }, []);
@@ -40,7 +59,12 @@ export function SessionScreen() {
         body: JSON.stringify({ email, password }),
       });
       setToken(session.access_token);
-      setUser(await api<CurrentUser>('/auth/me'));
+      const [current, listed] = await Promise.all([
+        api<CurrentUser>('/auth/me'),
+        api<TicketSummary[]>('/tickets'),
+      ]);
+      setUser(current);
+      setTickets(listed);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not sign in');
     } finally {
@@ -51,6 +75,7 @@ export function SessionScreen() {
   function signOut() {
     clearToken();
     setUser(null);
+    setTickets([]);
     setPassword('');
   }
 
@@ -72,6 +97,25 @@ export function SessionScreen() {
             File a ticket
           </Link>
         ) : null}
+        <div className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium">Tickets</h2>
+          {tickets.length === 0 ? (
+            <p className="text-sm text-zinc-600 dark:text-zinc-400">No tickets</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {tickets.map((ticket) => (
+                <li key={ticket.id}>
+                  <Link href={`/tickets/${ticket.id}`} className="text-sm font-medium">
+                    {ticket.title}
+                  </Link>
+                  <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                    {statusLabels[ticket.status]}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <Link
           href="/departments"
           className="flex h-11 items-center justify-center rounded-full border border-zinc-300 px-5 font-medium dark:border-zinc-700"
