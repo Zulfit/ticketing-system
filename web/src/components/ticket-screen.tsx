@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { api, ApiError, clearToken, getToken } from '@/lib/api';
+import { FormEvent, useEffect, useState } from 'react';
+import { api, ApiError, clearToken, CurrentUser, getToken } from '@/lib/api';
 
 type Person = {
   id: number;
@@ -29,6 +29,11 @@ type Ticket = {
   }[];
 };
 
+type Technician = {
+  id: number;
+  name: string;
+};
+
 const priorityLabels: Record<Ticket['priority'], string> = {
   LOW: 'Low',
   MEDIUM: 'Medium',
@@ -48,8 +53,13 @@ const statusLabels: Record<Ticket['status'], string> = {
 export function TicketScreen({ id }: { id: string }) {
   const router = useRouter();
   const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [technicians, setTechnicians] = useState<Technician[]>([]);
+  const [assigneeId, setAssigneeId] = useState('');
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -59,10 +69,18 @@ export function TicketScreen({ id }: { id: string }) {
     }
 
     let ignore = false;
-    api<Ticket>(`/tickets/${id}`)
-      .then((loaded) => {
+    Promise.all([api<Ticket>(`/tickets/${id}`), api<CurrentUser>('/auth/me')])
+      .then(async ([loaded, current]) => {
         if (ignore) return;
         setTicket(loaded);
+        setUser(current);
+        if (current.role === 'ADMIN' && loaded.status === 'OPEN') {
+          const people = await api<Technician[]>(
+            `/users?role=TECHNICIAN&departmentId=${loaded.department.id}`,
+          );
+          if (ignore) return;
+          setTechnicians(people);
+        }
         setReady(true);
       })
       .catch((caught) => {
@@ -86,6 +104,23 @@ export function TicketScreen({ id }: { id: string }) {
     };
   }, [id, router]);
 
+  async function onAssign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticket) return;
+    setAssignError(null);
+    setPending(true);
+    try {
+      const updated = await api<Ticket>(`/tickets/${ticket.id}/assign`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assigneeId: Number(assigneeId) }),
+      });
+      setTicket(updated);
+    } catch (caught) {
+      setAssignError(caught instanceof Error ? caught.message : 'Could not assign the ticket');
+      setPending(false);
+    }
+  }
+
   if (!ready) {
     return <p className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</p>;
   }
@@ -105,6 +140,7 @@ export function TicketScreen({ id }: { id: string }) {
   const opened = ticket.history.find(
     (entry) => entry.fromStatus === null && entry.toStatus === 'OPEN',
   );
+  const canAssign = user?.role === 'ADMIN' && ticket.status === 'OPEN';
 
   return (
     <article className="flex w-full max-w-md flex-col gap-4">
@@ -129,6 +165,40 @@ export function TicketScreen({ id }: { id: string }) {
         <dt className="text-zinc-600 dark:text-zinc-400">Assignee</dt>
         <dd>{ticket.assignee?.name ?? 'No assignee'}</dd>
       </dl>
+      {canAssign ? (
+        <form onSubmit={onAssign} className="flex flex-col gap-3">
+          {technicians.length === 0 ? (
+            <p className="text-sm">No technician in this department.</p>
+          ) : (
+            <label className="flex flex-col gap-1 text-sm">
+              Assign a technician
+              <select
+                required
+                value={assigneeId}
+                onChange={(event) => setAssigneeId(event.target.value)}
+                className="h-11 rounded-lg border border-zinc-300 bg-transparent px-3 dark:border-zinc-700"
+              >
+                <option value="">Choose a technician</option>
+                {technicians.map((technician) => (
+                  <option key={technician.id} value={technician.id}>
+                    {technician.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {assignError ? <p className="text-sm text-red-600">{assignError}</p> : null}
+          {technicians.length > 0 ? (
+            <button
+              type="submit"
+              disabled={pending}
+              className="h-11 rounded-full bg-foreground px-5 font-medium text-background disabled:opacity-60"
+            >
+              {pending ? 'Assigning…' : 'Assign'}
+            </button>
+          ) : null}
+        </form>
+      ) : null}
       {opened ? (
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Opened by {opened.changedBy.name} on {formatWhen(opened.createdAt)}

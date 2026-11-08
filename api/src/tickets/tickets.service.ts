@@ -1,8 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Role, TicketStatus } from '../generated/prisma/client.js';
 import { AuthUser } from '../auth/auth-user.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
+import { transitionToAssigned } from './ticket-status.js';
 
 const person = { id: true, name: true } as const;
 
@@ -82,6 +88,49 @@ export class TicketsService {
     });
 
     return this.toPublicTicket(ticket);
+  }
+
+  async assign(user: AuthUser, id: number, dto: AssignTicketDto) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: { status: true, departmentId: true },
+    });
+    if (!ticket) {
+      throw new NotFoundException('Ticket not found');
+    }
+    const toStatus = transitionToAssigned(ticket.status);
+
+    const assignee = await this.prisma.user.findUnique({
+      where: { id: dto.assigneeId },
+      select: { role: true, departmentId: true },
+    });
+    if (
+      !assignee ||
+      assignee.role !== Role.TECHNICIAN ||
+      assignee.departmentId !== ticket.departmentId
+    ) {
+      throw new BadRequestException(
+        "Assignee must be a technician in the ticket's department",
+      );
+    }
+
+    const updated = await this.prisma.ticket.update({
+      where: { id },
+      data: {
+        assigneeId: dto.assigneeId,
+        status: toStatus,
+        history: {
+          create: {
+            fromStatus: ticket.status,
+            toStatus,
+            changedById: user.userId,
+          },
+        },
+      },
+      select: ticketSelect,
+    });
+
+    return this.toPublicTicket(updated);
   }
 
   async findOne(user: AuthUser, id: number) {
