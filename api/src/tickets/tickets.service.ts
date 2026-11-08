@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,7 +9,8 @@ import { AuthUser } from '../auth/auth-user.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
-import { transitionToAssigned } from './ticket-status.js';
+import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
+import { transitionStatus, transitionToAssigned } from './ticket-status.js';
 
 const person = { id: true, name: true } as const;
 
@@ -19,6 +21,7 @@ const ticketSelect = {
   location: true,
   priority: true,
   status: true,
+  resolvedAt: true,
   assignee: { select: person },
   department: { select: { id: true, name: true } },
   reporter: { select: person },
@@ -44,6 +47,7 @@ type StoredTicket = {
   location: string;
   priority: string;
   status: string;
+  resolvedAt: Date | null;
   assignee: Person | null;
   department: { id: number; name: string };
   reporter: Person;
@@ -128,6 +132,67 @@ export class TicketsService {
         },
       },
       select: ticketSelect,
+    });
+
+    return this.toPublicTicket(updated);
+  }
+
+  async changeStatus(user: AuthUser, id: number, dto: UpdateTicketStatusDto) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        reporter: { select: person },
+        assignee: { select: person },
+      },
+    });
+    if (!ticket || !canSee(user, ticket)) {
+      throw new NotFoundException('Ticket not found');
+    }
+    const toStatus = transitionStatus(ticket.status, dto.status);
+    if (
+      (toStatus === TicketStatus.IN_PROGRESS ||
+        toStatus === TicketStatus.RESOLVED) &&
+      ticket.assignee?.id !== user.userId
+    ) {
+      throw new ForbiddenException('Only the assignee can move this ticket');
+    }
+    if (
+      toStatus === TicketStatus.CLOSED &&
+      user.role !== Role.ADMIN &&
+      ticket.reporter.id !== user.userId
+    ) {
+      throw new ForbiddenException(
+        'Only the creator or an admin can close this ticket',
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.ticket.updateMany({
+        where: { id, status: ticket.status },
+        data: {
+          status: toStatus,
+          ...(toStatus === TicketStatus.RESOLVED
+            ? { resolvedAt: new Date() }
+            : {}),
+        },
+      });
+      if (changed.count !== 1) {
+        throw new BadRequestException('That status change is not allowed');
+      }
+      await tx.statusHistory.create({
+        data: {
+          ticketId: id,
+          fromStatus: ticket.status,
+          toStatus,
+          note: dto.note,
+          changedById: user.userId,
+        },
+      });
+      return tx.ticket.findUniqueOrThrow({
+        where: { id },
+        select: ticketSelect,
+      });
     });
 
     return this.toPublicTicket(updated);
