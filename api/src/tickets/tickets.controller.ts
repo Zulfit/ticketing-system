@@ -42,6 +42,7 @@ export class TicketsController {
     @Body() dto: UpdateTicketStatusDto,
   ) {
     return this.tickets.changeStatus(user, id, dto);
+    
   }
 
   @Get(':id')

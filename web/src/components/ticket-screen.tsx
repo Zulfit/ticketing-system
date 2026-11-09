@@ -10,16 +10,27 @@ type Person = {
   name: string;
 };
 
+type TicketStatusName =
+  | 'OPEN'
+  | 'ASSIGNED'
+  | 'IN_PROGRESS'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'REJECTED';
+
+type TicketAction = 'start' | 'resolve' | 'close';
+
 type Ticket = {
   id: number;
   title: string;
   description: string;
   location: string;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'REJECTED';
+  status: TicketStatusName;
   assignee: Person | null;
   department: { id: number; name: string };
   creator: Person;
+  nextAction: { action: TicketAction; status: TicketStatusName } | null;
   history: {
     id: number;
     fromStatus: Ticket['status'] | null;
@@ -49,6 +60,12 @@ const statusLabels: Record<Ticket['status'], string> = {
   RESOLVED: 'Resolved',
   CLOSED: 'Closed',
   REJECTED: 'Rejected',
+};
+
+const actionLabels: Record<TicketAction, { label: string; pendingLabel: string }> = {
+  start: { label: 'Start work', pendingLabel: 'Starting…' },
+  resolve: { label: 'Mark resolved', pendingLabel: 'Resolving…' },
+  close: { label: 'Close', pendingLabel: 'Closing…' },
 };
 
 export function TicketScreen({ id }: { id: string }) {
@@ -127,9 +144,8 @@ export function TicketScreen({ id }: { id: string }) {
 
   async function onStatus(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!ticket || !user) return;
-    const action = statusAction(user, ticket);
-    if (!action) return;
+    if (!ticket?.nextAction) return;
+    const action = ticket.nextAction;
     setStatusError(null);
     setStatusPending(true);
     try {
@@ -169,7 +185,7 @@ export function TicketScreen({ id }: { id: string }) {
   }
 
   const canAssign = user?.role === 'ADMIN' && ticket.status === 'OPEN';
-  const action = user ? statusAction(user, ticket) : null;
+  const action = ticket.nextAction ? actionLabels[ticket.nextAction.action] : null;
 
   return (
     <article className="flex w-full max-w-md flex-col gap-4">
@@ -265,34 +281,6 @@ export function TicketScreen({ id }: { id: string }) {
       </section>
     </article>
   );
-}
-
-function statusAction(user: CurrentUser, ticket: Ticket) {
-  if (user.id === ticket.assignee?.id && ticket.status === 'ASSIGNED') {
-    return {
-      status: 'IN_PROGRESS' as const,
-      label: 'Start work',
-      pendingLabel: 'Starting…',
-    };
-  }
-  if (user.id === ticket.assignee?.id && ticket.status === 'IN_PROGRESS') {
-    return {
-      status: 'RESOLVED' as const,
-      label: 'Mark resolved',
-      pendingLabel: 'Resolving…',
-    };
-  }
-  if (
-    ticket.status === 'RESOLVED' &&
-    (user.role === 'ADMIN' || user.id === ticket.creator.id)
-  ) {
-    return {
-      status: 'CLOSED' as const,
-      label: 'Close',
-      pendingLabel: 'Closing…',
-    };
-  }
-  return null;
 }
 
 function historyChange(entry: Ticket['history'][number]) {
