@@ -10,20 +10,32 @@ type Person = {
   name: string;
 };
 
+type TicketStatusName =
+  | 'OPEN'
+  | 'ASSIGNED'
+  | 'IN_PROGRESS'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'REJECTED';
+
+type TicketAction = 'start' | 'resolve' | 'close';
+
 type Ticket = {
   id: number;
   title: string;
   description: string;
   location: string;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'REJECTED';
+  status: TicketStatusName;
   assignee: Person | null;
   department: { id: number; name: string };
   creator: Person;
+  nextAction: { action: TicketAction; status: TicketStatusName } | null;
   history: {
     id: number;
     fromStatus: Ticket['status'] | null;
     toStatus: Ticket['status'];
+    note: string | null;
     createdAt: string;
     changedBy: Person;
   }[];
@@ -50,6 +62,12 @@ const statusLabels: Record<Ticket['status'], string> = {
   REJECTED: 'Rejected',
 };
 
+const actionLabels: Record<TicketAction, { label: string; pendingLabel: string }> = {
+  start: { label: 'Start work', pendingLabel: 'Starting…' },
+  resolve: { label: 'Mark resolved', pendingLabel: 'Resolving…' },
+  close: { label: 'Close', pendingLabel: 'Closing…' },
+};
+
 export function TicketScreen({ id }: { id: string }) {
   const router = useRouter();
   const [ticket, setTicket] = useState<Ticket | null>(null);
@@ -59,7 +77,10 @@ export function TicketScreen({ id }: { id: string }) {
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [statusPending, setStatusPending] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -121,6 +142,32 @@ export function TicketScreen({ id }: { id: string }) {
     }
   }
 
+  async function onStatus(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticket?.nextAction) return;
+    const action = ticket.nextAction;
+    setStatusError(null);
+    setStatusPending(true);
+    try {
+      const trimmed = note.trim();
+      const updated = await api<Ticket>(`/tickets/${ticket.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: action.status,
+          ...(trimmed ? { note: trimmed } : {}),
+        }),
+      });
+      setTicket(updated);
+      setNote('');
+    } catch (caught) {
+      setStatusError(
+        caught instanceof Error ? caught.message : 'Could not update the ticket',
+      );
+    } finally {
+      setStatusPending(false);
+    }
+  }
+
   if (!ready) {
     return <p className="text-sm text-zinc-600 dark:text-zinc-400">Loading…</p>;
   }
@@ -137,10 +184,8 @@ export function TicketScreen({ id }: { id: string }) {
     );
   }
 
-  const opened = ticket.history.find(
-    (entry) => entry.fromStatus === null && entry.toStatus === 'OPEN',
-  );
   const canAssign = user?.role === 'ADMIN' && ticket.status === 'OPEN';
+  const action = ticket.nextAction ? actionLabels[ticket.nextAction.action] : null;
 
   return (
     <article className="flex w-full max-w-md flex-col gap-4">
@@ -199,13 +244,50 @@ export function TicketScreen({ id }: { id: string }) {
           ) : null}
         </form>
       ) : null}
-      {opened ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Opened by {opened.changedBy.name} on {formatWhen(opened.createdAt)}
-        </p>
+      {action ? (
+        <form onSubmit={onStatus} className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            Note (optional)
+            <textarea
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              rows={3}
+              className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700"
+            />
+          </label>
+          {statusError ? <p className="text-sm text-red-600">{statusError}</p> : null}
+          <button
+            type="submit"
+            disabled={statusPending}
+            className="h-11 rounded-full bg-foreground px-5 font-medium text-background disabled:opacity-60"
+          >
+            {statusPending ? action.pendingLabel : action.label}
+          </button>
+        </form>
       ) : null}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium">History</h2>
+        <ol className="flex flex-col gap-3">
+          {ticket.history.map((entry) => (
+            <li key={entry.id} className="text-sm">
+              <p>{historyChange(entry)}</p>
+              <p className="text-zinc-600 dark:text-zinc-400">
+                {entry.changedBy.name} · {formatWhen(entry.createdAt)}
+              </p>
+              {entry.note ? <p className="mt-1">{entry.note}</p> : null}
+            </li>
+          ))}
+        </ol>
+      </section>
     </article>
   );
+}
+
+function historyChange(entry: Ticket['history'][number]) {
+  if (!entry.fromStatus) {
+    return statusLabels[entry.toStatus];
+  }
+  return `${statusLabels[entry.fromStatus]} to ${statusLabels[entry.toStatus]}`;
 }
 
 function formatWhen(value: string) {

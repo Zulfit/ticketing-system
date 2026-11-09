@@ -13,6 +13,7 @@ import { Roles } from '../common/decorators/roles.decorator.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
+import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
 import { TicketsService } from './tickets.service.js';
 
 @Controller('tickets')
@@ -32,6 +33,16 @@ export class TicketsController {
     @Body() dto: AssignTicketDto,
   ) {
     return this.tickets.assign(user, id, dto);
+  }
+
+  @Patch(':id/status')
+  changeStatus(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTicketStatusDto,
+  ) {
+    return this.tickets.changeStatus(user, id, dto);
+    
   }
 
   @Get(':id')

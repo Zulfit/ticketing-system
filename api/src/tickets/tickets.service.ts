@@ -8,7 +8,12 @@ import { AuthUser } from '../auth/auth-user.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
-import { transitionToAssigned } from './ticket-status.js';
+import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
+import {
+  nextAction,
+  transitionStatus,
+  transitionToAssigned,
+} from './ticket-status.js';
 
 const person = { id: true, name: true } as const;
 
@@ -43,7 +48,7 @@ type StoredTicket = {
   description: string;
   location: string;
   priority: string;
-  status: string;
+  status: TicketStatus;
   assignee: Person | null;
   department: { id: number; name: string };
   reporter: Person;
@@ -87,7 +92,7 @@ export class TicketsService {
       select: ticketSelect,
     });
 
-    return this.toPublicTicket(ticket);
+    return this.toPublicTicket(ticket, user);
   }
 
   async assign(user: AuthUser, id: number, dto: AssignTicketDto) {
@@ -130,7 +135,55 @@ export class TicketsService {
       select: ticketSelect,
     });
 
-    return this.toPublicTicket(updated);
+    return this.toPublicTicket(updated, user);
+  }
+
+  async changeStatus(user: AuthUser, id: number, dto: UpdateTicketStatusDto) {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        reporter: { select: person },
+        assignee: { select: person },
+      },
+    });
+    if (!ticket || !canSee(user, ticket)) {
+      throw new NotFoundException('Ticket not found');
+    }
+    const toStatus = transitionStatus(
+      {
+        status: ticket.status,
+        assigneeId: ticket.assignee?.id ?? null,
+        creatorId: ticket.reporter.id,
+      },
+      user,
+      dto.status,
+    );
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.ticket.updateMany({
+        where: { id, status: ticket.status },
+        data: { status: toStatus },
+      });
+      if (changed.count !== 1) {
+        throw new BadRequestException('That status change is not allowed');
+      }
+      await tx.statusHistory.create({
+        data: {
+          ticketId: id,
+          fromStatus: ticket.status,
+          toStatus,
+          note: dto.note,
+          changedById: user.userId,
+        },
+      });
+      return tx.ticket.findUniqueOrThrow({
+        where: { id },
+        select: ticketSelect,
+      });
+    });
+
+    return this.toPublicTicket(updated, user);
   }
 
   async list(user: AuthUser) {
@@ -139,7 +192,9 @@ export class TicketsService {
       orderBy: { createdAt: 'desc' },
       select: ticketSelect,
     });
-    return Promise.all(tickets.map((ticket) => this.toPublicTicket(ticket)));
+    return Promise.all(
+      tickets.map((ticket) => this.toPublicTicket(ticket, user)),
+    );
   }
 
   async findOne(user: AuthUser, id: number) {
@@ -150,10 +205,10 @@ export class TicketsService {
     if (!ticket || !canSee(user, ticket)) {
       throw new NotFoundException('Ticket not found');
     }
-    return this.toPublicTicket(ticket);
+    return this.toPublicTicket(ticket, user);
   }
 
-  private async toPublicTicket(ticket: StoredTicket) {
+  private async toPublicTicket(ticket: StoredTicket, user: AuthUser) {
     const ids = [...new Set(ticket.history.map((entry) => entry.changedById))];
     const people = await this.prisma.user.findMany({
       where: { id: { in: ids } },
@@ -165,6 +220,14 @@ export class TicketsService {
     return {
       ...rest,
       creator: reporter,
+      nextAction: nextAction(
+        {
+          status: ticket.status,
+          assigneeId: ticket.assignee?.id ?? null,
+          creatorId: reporter.id,
+        },
+        user,
+      ),
       history: history.map((entry) => {
         const changedBy = byId.get(entry.changedById);
         if (!changedBy) {
