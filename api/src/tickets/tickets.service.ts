@@ -188,7 +188,19 @@ export class TicketsService {
   }
 
   async list(user: AuthUser, query: TicketListQuery) {
-    const where = visibleWhere(user);
+    const where = {
+      AND: [
+        visibleWhere(user),
+        {
+          status: query.status,
+          priority: query.priority,
+          departmentId: query.departmentId,
+          title: query.search
+            ? { contains: query.search, mode: 'insensitive' as const }
+            : undefined,
+        },
+      ],
+    };
     const [total, tickets] = await this.prisma.$transaction([
       this.prisma.ticket.count({ where }),
       this.prisma.ticket.findMany({

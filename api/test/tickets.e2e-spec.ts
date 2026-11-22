@@ -554,6 +554,122 @@ describe('Tickets', () => {
       .expect(400);
   });
 
+  it('lists only their own tickets for a reporter and every ticket for an admin', async () => {
+    const { reporter, admin, facilities, ticket } = await filedTicket(app);
+    await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({
+        name: 'Other Reporter',
+        email: 'other.reporter@example.com',
+        password: 'password',
+      })
+      .expect(201);
+    const other = await signIn(app, 'other.reporter@example.com');
+    const theirs = await fileTicket(app, other.token, facilities.id);
+
+    expect(await listIds(app, reporter.token)).toEqual({
+      ids: [ticket.id],
+      total: 1,
+    });
+    expect(await listIds(app, other.token)).toEqual({
+      ids: [theirs.body.id],
+      total: 1,
+    });
+    expect(await listIds(app, admin.token)).toEqual({
+      ids: [theirs.body.id, ticket.id],
+      total: 2,
+    });
+  });
+
+  it('keeps an unassigned ticket off the list of a technician who filters to its department', async () => {
+    const { reporter, technician, admin, facilities, ticket } =
+      await filedTicket(app);
+    await fileTicket(app, reporter.token, facilities.id);
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${ticket.id}/assign`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ assigneeId: technician.user.id })
+      .expect(200);
+
+    expect(
+      await listIds(app, technician.token, `?departmentId=${facilities.id}`),
+    ).toEqual({ ids: [ticket.id], total: 1 });
+  });
+
+  it('drops a ticket that fails the status, priority, or department filter', async () => {
+    const { reporter, technician, admin, facilities, ticket } =
+      await filedTicket(app);
+    const itDepartment = (
+      await request(app.getHttpServer())
+        .get('/api/departments')
+        .set('Authorization', `Bearer ${admin.token}`)
+        .expect(200)
+    ).body.find((department: { name: string }) => department.name === 'IT');
+    const assigned = await fileTicket(app, reporter.token, facilities.id);
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${assigned.body.id}/assign`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ assigneeId: technician.user.id })
+      .expect(200);
+    const urgent = await fileTicket(app, reporter.token, facilities.id);
+    await app.get(PrismaService).ticket.update({
+      where: { id: urgent.body.id },
+      data: { priority: 'URGENT' },
+    });
+    const inIt = await fileTicket(app, reporter.token, itDepartment.id);
+
+    expect(await listIds(app, admin.token, '?status=OPEN')).toEqual({
+      ids: [inIt.body.id, urgent.body.id, ticket.id],
+      total: 3,
+    });
+    expect(await listIds(app, admin.token, '?priority=MEDIUM')).toEqual({
+      ids: [inIt.body.id, assigned.body.id, ticket.id],
+      total: 3,
+    });
+    expect(
+      await listIds(app, admin.token, `?departmentId=${facilities.id}`),
+    ).toEqual({
+      ids: [urgent.body.id, assigned.body.id, ticket.id],
+      total: 3,
+    });
+  });
+
+  it('searches titles without matching a description', async () => {
+    const { reporter, facilities, ticket } = await filedTicket(app);
+    await fileTicket(app, reporter.token, facilities.id, {
+      title: 'Broken light',
+      description: 'A leak behind the fitting',
+    });
+
+    expect(await listIds(app, reporter.token, '?search=leak')).toEqual({
+      ids: [ticket.id],
+      total: 1,
+    });
+  });
+
+  it('refuses an unknown status', async () => {
+    const { reporter } = await filedTicket(app);
+
+    await request(app.getHttpServer())
+      .get('/api/tickets?status=LOST')
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(400);
+  });
+
+  it('treats an empty search as no search', async () => {
+    const { reporter, facilities } = await filedTicket(app);
+    await fileTicket(app, reporter.token, facilities.id, {
+      title: 'Broken light',
+    });
+
+    const unfiltered = await listIds(app, reporter.token);
+    expect(unfiltered.total).toBe(2);
+    expect(await listIds(app, reporter.token, '?search=')).toEqual(unfiltered);
+    expect(await listIds(app, reporter.token, '?search=%20%20')).toEqual(
+      unfiltered,
+    );
+  });
+
   it('refuses a technician from another department', async () => {
     const { seed } = await import('../prisma/seed.js');
     await seed(app.get(PrismaService));
@@ -1404,6 +1520,7 @@ function fileTicket(
   app: INestApplication,
   token: string,
   departmentId: number,
+  fields: { title?: string; description?: string } = {},
 ) {
   return request(app.getHttpServer())
     .post('/api/tickets')
@@ -1413,6 +1530,18 @@ function fileTicket(
       description: 'Drips all night',
       location: 'Block A kitchen',
       departmentId,
+      ...fields,
     })
     .expect(201);
+}
+
+async function listIds(app: INestApplication, token: string, query = '') {
+  const listed = await request(app.getHttpServer())
+    .get(`/api/tickets${query}`)
+    .set('Authorization', `Bearer ${token}`)
+    .expect(200);
+  return {
+    ids: listed.body.tickets.map((ticket: { id: number }) => ticket.id),
+    total: listed.body.total as number,
+  };
 }
