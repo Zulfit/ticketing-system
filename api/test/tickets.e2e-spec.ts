@@ -491,7 +491,7 @@ describe('Tickets', () => {
       .set('Authorization', `Bearer ${technicianToken}`)
       .expect(200);
 
-    expect(listed.body).toEqual([
+    expect(listed.body.tickets).toEqual([
       expect.objectContaining({
         id: created.body.id,
         title: 'Leaking tap',
@@ -499,6 +499,59 @@ describe('Tickets', () => {
         assignee: { id: assignee.body.id, name: 'Taylor Technician' },
       }),
     ]);
+    expect(listed.body.total).toBe(1);
+  });
+
+  it('lists the first ten tickets, newest first, with the total of every visible ticket', async () => {
+    const { reporter, ids } = await elevenTickets(app);
+
+    const listed = await request(app.getHttpServer())
+      .get('/api/tickets')
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(
+      listed.body.tickets.map((ticket: { id: number }) => ticket.id),
+    ).toEqual(ids.slice(1).reverse());
+    expect(listed.body.total).toBe(11);
+  });
+
+  it('lists the oldest of eleven tickets on the second page of ten', async () => {
+    const { reporter, ids } = await elevenTickets(app);
+
+    const listed = await request(app.getHttpServer())
+      .get('/api/tickets?page=2&limit=10')
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(
+      listed.body.tickets.map((ticket: { id: number }) => ticket.id),
+    ).toEqual([ids[0]]);
+    expect(listed.body.total).toBe(11);
+  });
+
+  it('lists the newer of two tickets first', async () => {
+    const { reporter, facilities, ticket: older } = await filedTicket(app);
+    const newer = await fileTicket(app, reporter.token, facilities.id);
+
+    const listed = await request(app.getHttpServer())
+      .get('/api/tickets')
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(
+      listed.body.tickets.map((ticket: { id: number }) => ticket.id),
+    ).toEqual([newer.body.id, older.id]);
+    expect(listed.body.tickets[0]).toEqual(newer.body);
+  });
+
+  it('refuses page zero', async () => {
+    const { reporter } = await filedTicket(app);
+
+    await request(app.getHttpServer())
+      .get('/api/tickets?page=0')
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(400);
   });
 
   it('refuses a technician from another department', async () => {
@@ -1275,6 +1328,19 @@ async function filedTicket(app: INestApplication) {
     facilities,
     ticket: created.body as { id: number },
   };
+}
+
+async function elevenTickets(app: INestApplication) {
+  const { seed } = await import('../prisma/seed.js');
+  await seed(app.get(PrismaService));
+  const reporter = await signIn(app, 'reporter@example.com');
+  const facilities = await facilitiesDepartment(app, reporter.token);
+  const ids: number[] = [];
+  for (let i = 0; i < 11; i += 1) {
+    const created = await fileTicket(app, reporter.token, facilities.id);
+    ids.push(created.body.id);
+  }
+  return { reporter, ids };
 }
 
 async function overlapStatusReads<T>(

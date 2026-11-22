@@ -17,6 +17,11 @@ type TicketSummary = {
   status: 'OPEN' | 'ASSIGNED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'REJECTED';
 };
 
+type TicketListPage = {
+  tickets: TicketSummary[];
+  total: number;
+};
+
 const statusLabels: Record<TicketSummary['status'], string> = {
   OPEN: 'Open',
   ASSIGNED: 'Assigned',
@@ -28,7 +33,7 @@ const statusLabels: Record<TicketSummary['status'], string> = {
 
 export function SessionScreen() {
   const [user, setUser] = useState<CurrentUser | null>(null);
-  const [tickets, setTickets] = useState<TicketSummary[]>([]);
+  const [list, setList] = useState<TicketListPage>({ tickets: [], total: 0 });
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -40,10 +45,10 @@ export function SessionScreen() {
       setReady(true);
       return;
     }
-    Promise.all([api<CurrentUser>('/auth/me'), api<TicketSummary[]>('/tickets')])
+    Promise.all([api<CurrentUser>('/auth/me'), api<TicketListPage>('/tickets')])
       .then(([current, listed]) => {
         setUser(current);
-        setTickets(listed);
+        setList(listed);
       })
       .catch(() => clearToken())
       .finally(() => setReady(true));
@@ -61,10 +66,10 @@ export function SessionScreen() {
       setToken(session.access_token);
       const [current, listed] = await Promise.all([
         api<CurrentUser>('/auth/me'),
-        api<TicketSummary[]>('/tickets'),
+        api<TicketListPage>('/tickets'),
       ]);
       setUser(current);
-      setTickets(listed);
+      setList(listed);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not sign in');
     } finally {
@@ -75,7 +80,7 @@ export function SessionScreen() {
   function signOut() {
     clearToken();
     setUser(null);
-    setTickets([]);
+    setList({ tickets: [], total: 0 });
     setPassword('');
   }
 
@@ -99,11 +104,14 @@ export function SessionScreen() {
         ) : null}
         <div className="flex flex-col gap-2">
           <h2 className="text-sm font-medium">Tickets</h2>
-          {tickets.length === 0 ? (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            {list.total} {list.total === 1 ? 'ticket' : 'tickets'}
+          </p>
+          {list.tickets.length === 0 ? (
             <p className="text-sm text-zinc-600 dark:text-zinc-400">No tickets</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {tickets.map((ticket) => (
+              {list.tickets.map((ticket) => (
                 <li key={ticket.id}>
                   <Link href={`/tickets/${ticket.id}`} className="text-sm font-medium">
                     {ticket.title}
