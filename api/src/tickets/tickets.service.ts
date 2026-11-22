@@ -8,6 +8,7 @@ import { AuthUser } from '../auth/auth-user.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
+import { TicketListQuery } from './dto/list-tickets.query.js';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
 import {
   nextAction,
@@ -186,15 +187,36 @@ export class TicketsService {
     return this.toPublicTicket(updated, user);
   }
 
-  async list(user: AuthUser) {
-    const tickets = await this.prisma.ticket.findMany({
-      where: visibleWhere(user),
-      orderBy: { createdAt: 'desc' },
-      select: ticketSelect,
-    });
-    return Promise.all(
-      tickets.map((ticket) => this.toPublicTicket(ticket, user)),
-    );
+  async list(user: AuthUser, query: TicketListQuery) {
+    const where = {
+      AND: [
+        visibleWhere(user),
+        {
+          status: query.status,
+          priority: query.priority,
+          departmentId: query.departmentId,
+          title: query.search
+            ? { contains: query.search, mode: 'insensitive' as const }
+            : undefined,
+        },
+      ],
+    };
+    const [total, tickets] = await this.prisma.$transaction([
+      this.prisma.ticket.count({ where }),
+      this.prisma.ticket.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: ticketSelect,
+      }),
+    ]);
+    return {
+      tickets: await Promise.all(
+        tickets.map((ticket) => this.toPublicTicket(ticket, user)),
+      ),
+      total,
+    };
   }
 
   async findOne(user: AuthUser, id: number) {

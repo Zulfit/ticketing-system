@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { Role } from '../generated/prisma/client.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
@@ -13,6 +14,7 @@ import { Roles } from '../common/decorators/roles.decorator.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
+import { TicketListQuery } from './dto/list-tickets.query.js';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
 import { TicketsService } from './tickets.service.js';
 
@@ -21,8 +23,8 @@ export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
 
   @Get()
-  list(@CurrentUser() user: AuthUser) {
-    return this.tickets.list(user);
+  list(@CurrentUser() user: AuthUser, @Query() query: TicketListQuery) {
+    return this.tickets.list(user, query);
   }
 
   @Roles(Role.ADMIN)
