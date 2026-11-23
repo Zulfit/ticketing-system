@@ -7,6 +7,7 @@ import { Role, TicketStatus } from '../generated/prisma/client.js';
 import { AuthUser } from '../auth/auth-user.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
+import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
 import { TicketListQuery } from './dto/list-tickets.query.js';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
@@ -269,6 +270,57 @@ export class TicketsService {
         },
         user,
       ),
+    };
+  }
+
+  async addComment(
+    user: AuthUser,
+    id: number,
+    dto: CreateCommentDto,
+  ): Promise<PublicComment> {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        reporter: { select: person },
+        assignee: { select: person },
+      },
+    });
+    if (!ticket || !canSee(user, ticket)) {
+      throw new NotFoundException('Ticket not found');
+    }
+    if (
+      !canComment(
+        {
+          status: ticket.status,
+          creatorId: ticket.reporter.id,
+          assigneeId: ticket.assignee?.id ?? null,
+        },
+        user,
+      )
+    ) {
+      throw new BadRequestException('This ticket accepts no new comment');
+    }
+
+    const comment = await this.prisma.comment.create({
+      data: {
+        body: dto.body,
+        ticketId: id,
+        authorId: user.userId,
+      },
+      select: {
+        id: true,
+        body: true,
+        createdAt: true,
+        author: { select: person },
+      },
+    });
+
+    return {
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.createdAt.toISOString(),
+      author: comment.author,
     };
   }
 

@@ -13,6 +13,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import type { AuthUser } from '../auth/auth-user.js';
 import { AssignTicketDto } from './dto/assign-ticket.dto.js';
+import { CreateCommentDto } from './dto/create-comment.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
 import { TicketListQuery } from './dto/list-tickets.query.js';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
@@ -53,6 +54,15 @@ export class TicketsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.tickets.comments(user, id);
+  }
+
+  @Post(':id/comments')
+  addComment(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateCommentDto,
+  ) {
+    return this.tickets.addComment(user, id, dto);
   }
 
   @Get(':id')

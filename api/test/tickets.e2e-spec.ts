@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { hash } from 'bcryptjs';
 import request from 'supertest';
-import { Role } from '../src/generated/prisma/client.js';
+import { Role, TicketStatus } from '../src/generated/prisma/client.js';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/configure-app.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
@@ -1466,6 +1466,245 @@ describe('Tickets', () => {
 
     await request(app.getHttpServer())
       .get(`/api/tickets/${ticket.id}/comments`)
+      .expect(401);
+  });
+
+  it('lets the creator, the assignee, and an admin comment while the ticket is open, assigned, or in progress', async () => {
+    const { reporter, technician, admin, facilities, ticket } =
+      await filedTicket(app);
+    const posted: { id: number }[] = [];
+
+    const first = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Still dripping' })
+      .expect(201);
+    expect(first.body).toEqual({
+      id: expect.any(Number),
+      body: 'Still dripping',
+      createdAt: expect.any(String),
+      author: { id: reporter.user.id, name: 'Riley Reporter' },
+    });
+    expect(Number.isNaN(Date.parse(first.body.createdAt))).toBe(false);
+    posted.push(first.body);
+
+    const second = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Still dripping tonight' })
+      .expect(201);
+    posted.push(second.body);
+
+    const adminOnOpen = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ body: 'I will send someone' })
+      .expect(201);
+    expect(adminOnOpen.body.author).toEqual({
+      id: admin.user.id,
+      name: 'Avery Admin',
+    });
+    posted.push(adminOnOpen.body);
+
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${ticket.id}/assign`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ assigneeId: technician.user.id })
+      .expect(200);
+
+    const assigned = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${technician.token}`)
+      .send({ body: 'On my way' })
+      .expect(201);
+    expect(assigned.body.author).toEqual({
+      id: technician.user.id,
+      name: 'Taylor Technician',
+    });
+    posted.push(assigned.body);
+
+    const creatorOnAssigned = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'The drip is worse' })
+      .expect(201);
+    posted.push(creatorOnAssigned.body);
+
+    const adminOnAssigned = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ body: 'Keep me posted' })
+      .expect(201);
+    posted.push(adminOnAssigned.body);
+
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${ticket.id}/status`)
+      .set('Authorization', `Bearer ${technician.token}`)
+      .send({ status: 'IN_PROGRESS' })
+      .expect(200);
+
+    const creatorWorking = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Any update' })
+      .expect(201);
+    posted.push(creatorWorking.body);
+
+    const assigneeWorking = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${technician.token}`)
+      .send({ body: 'Replacing the washer' })
+      .expect(201);
+    posted.push(assigneeWorking.body);
+
+    const adminWorking = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ body: 'Thanks' })
+      .expect(201);
+    posted.push(adminWorking.body);
+
+    const other = await fileTicket(app, reporter.token, facilities.id, {
+      title: 'Broken light',
+    });
+    const elsewhere = await request(app.getHttpServer())
+      .post(`/api/tickets/${other.body.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'This one stays dark' })
+      .expect(201);
+
+    const thread = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(thread.body.canComment).toBe(true);
+    expect(thread.body.comments).toEqual(posted);
+    expect(thread.body.comments[1].id).toBe(second.body.id);
+    for (const comment of thread.body.comments) {
+      expect(comment.author.name).toEqual(expect.any(String));
+      expect(Number.isNaN(Date.parse(comment.createdAt))).toBe(false);
+    }
+    expect(
+      thread.body.comments.map((comment: { id: number }) => comment.id),
+    ).not.toContain(elsewhere.body.id);
+  });
+
+  it('hides comment creation from a technician who is not the assignee', async () => {
+    const { technician, ticket } = await filedTicket(app);
+
+    const hidden = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${technician.token}`)
+      .send({ body: 'I can see this' })
+      .expect(404);
+
+    expect(hidden.body.message).toBe('Ticket not found');
+  });
+
+  it('refuses a comment once the ticket is resolved, closed, or rejected', async () => {
+    const { reporter, technician, admin, facilities, ticket } =
+      await filedTicket(app);
+    await assignAndResolve(app, ticket.id, {
+      adminToken: admin.token,
+      technicianToken: technician.token,
+      assigneeId: technician.user.id,
+    });
+
+    const resolved = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Too late' })
+      .expect(400);
+    expect(resolved.body.message).toBe('This ticket accepts no new comment');
+
+    const resolvedThread = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+    expect(resolvedThread.body).toEqual({
+      comments: [],
+      canComment: false,
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/tickets/${ticket.id}/status`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ status: 'CLOSED' })
+      .expect(200);
+
+    const closed = await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Too late' })
+      .expect(400);
+    expect(closed.body.message).toBe('This ticket accepts no new comment');
+
+    const closedThread = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+    expect(closedThread.body).toEqual({
+      comments: [],
+      canComment: false,
+    });
+
+    const rejectedTicket = await fileTicket(
+      app,
+      reporter.token,
+      facilities.id,
+      { title: 'Broken light' },
+    );
+    await app.get(PrismaService).ticket.update({
+      where: { id: rejectedTicket.body.id },
+      data: { status: TicketStatus.REJECTED },
+    });
+
+    const rejected = await request(app.getHttpServer())
+      .post(`/api/tickets/${rejectedTicket.body.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: 'Too late' })
+      .expect(400);
+    expect(rejected.body.message).toBe('This ticket accepts no new comment');
+
+    const rejectedThread = await request(app.getHttpServer())
+      .get(`/api/tickets/${rejectedTicket.body.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+    expect(rejectedThread.body).toEqual({
+      comments: [],
+      canComment: false,
+    });
+  });
+
+  it('refuses a comment that is only whitespace', async () => {
+    const { reporter, ticket } = await filedTicket(app);
+
+    const before = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .send({ body: '   ' })
+      .expect(400);
+
+    const after = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(after.body).toEqual(before.body);
+  });
+
+  it('refuses a comment with no token', async () => {
+    const { ticket } = await filedTicket(app);
+
+    await request(app.getHttpServer())
+      .post(`/api/tickets/${ticket.id}/comments`)
+      .send({ body: 'Still dripping' })
       .expect(401);
   });
 });
