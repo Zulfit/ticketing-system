@@ -46,6 +46,18 @@ type Technician = {
   name: string;
 };
 
+type PublicComment = {
+  id: number;
+  body: string;
+  createdAt: string;
+  author: { id: number; name: string };
+};
+
+type CommentThread = {
+  comments: PublicComment[];
+  canComment: boolean;
+};
+
 const priorityLabels: Record<Ticket['priority'], string> = {
   LOW: 'Low',
   MEDIUM: 'Medium',
@@ -81,7 +93,20 @@ export function TicketScreen({ id }: { id: string }) {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [statusPending, setStatusPending] = useState(false);
+  const [thread, setThread] = useState<CommentThread | null>(null);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentBody, setCommentBody] = useState('');
+  const [commentFormError, setCommentFormError] = useState<string | null>(null);
+  const [commentPending, setCommentPending] = useState(false);
   const [ready, setReady] = useState(false);
+  const [commentTicketId, setCommentTicketId] = useState(id);
+  if (commentTicketId !== id) {
+    setCommentTicketId(id);
+    setThread(null);
+    setCommentError(null);
+    setCommentBody('');
+    setCommentFormError(null);
+  }
 
   useEffect(() => {
     if (!getToken()) {
@@ -101,6 +126,21 @@ export function TicketScreen({ id }: { id: string }) {
           );
           if (ignore) return;
           setTechnicians(people);
+        }
+        try {
+          const loadedThread = await api<CommentThread>(`/tickets/${id}/comments`);
+          if (ignore) return;
+          setThread(loadedThread);
+        } catch (caught) {
+          if (ignore) return;
+          if (caught instanceof ApiError && caught.status === 401) {
+            clearToken();
+            router.replace('/');
+            return;
+          }
+          setCommentError(
+            caught instanceof Error ? caught.message : 'Could not load the comments',
+          );
         }
         setReady(true);
       })
@@ -165,6 +205,34 @@ export function TicketScreen({ id }: { id: string }) {
       );
     } finally {
       setStatusPending(false);
+    }
+  }
+
+  async function onComment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ticket) return;
+    setCommentFormError(null);
+    setCommentPending(true);
+    try {
+      const created = await api<PublicComment>(`/tickets/${ticket.id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ body: commentBody.trim() }),
+      });
+      setThread((current) =>
+        current ? { ...current, comments: [...current.comments, created] } : current,
+      );
+      setCommentBody('');
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 401) {
+        clearToken();
+        router.replace('/');
+        return;
+      }
+      setCommentFormError(
+        caught instanceof Error ? caught.message : 'Could not add the comment',
+      );
+    } finally {
+      setCommentPending(false);
     }
   }
 
@@ -265,6 +333,43 @@ export function TicketScreen({ id }: { id: string }) {
           </button>
         </form>
       ) : null}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium">Comments</h2>
+        {commentError ? <p className="text-sm text-red-600">{commentError}</p> : null}
+        <ol className="flex flex-col gap-3">
+          {thread?.comments.map((comment) => (
+            <li key={comment.id} className="text-sm">
+              <p>{comment.body}</p>
+              <p className="text-zinc-600 dark:text-zinc-400">
+                {comment.author.name} · {formatWhen(comment.createdAt)}
+              </p>
+            </li>
+          ))}
+        </ol>
+        {thread?.canComment ? (
+          <form onSubmit={onComment} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              Comment
+              <textarea
+                value={commentBody}
+                onChange={(event) => setCommentBody(event.target.value)}
+                rows={3}
+                className="rounded-lg border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700"
+              />
+            </label>
+            {commentFormError ? (
+              <p className="text-sm text-red-600">{commentFormError}</p>
+            ) : null}
+            <button
+              type="submit"
+              disabled={commentPending}
+              className="h-11 rounded-full bg-foreground px-5 font-medium text-background disabled:opacity-60"
+            >
+              {commentPending ? 'Commenting…' : 'Comment'}
+            </button>
+          </form>
+        ) : null}
+      </section>
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-medium">History</h2>
         <ol className="flex flex-col gap-3">
