@@ -47,6 +47,14 @@ export class TicketsController {
     
   }
 
+  @Get(':id/comments')
+  comments(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.tickets.comments(user, id);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: AuthUser,

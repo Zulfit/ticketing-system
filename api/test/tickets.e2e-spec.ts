@@ -1401,6 +1401,73 @@ describe('Tickets', () => {
       .send({ status: 'IN_PROGRESS' })
       .expect(404);
   });
+
+  it('returns an empty comment thread for the creator of an open ticket', async () => {
+    const { reporter, ticket } = await filedTicket(app);
+
+    const thread = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(thread.body).toEqual({ comments: [], canComment: true });
+  });
+
+  it('hides the comment thread from a technician who is not the assignee', async () => {
+    const { technician, ticket } = await filedTicket(app);
+
+    const hidden = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${technician.token}`)
+      .expect(404);
+
+    expect(hidden.body.message).toBe('Ticket not found');
+  });
+
+  it('hides the comment thread from a reporter who did not create the ticket', async () => {
+    const { ticket } = await filedTicket(app);
+
+    await request(app.getHttpServer())
+      .post('/api/auth/register')
+      .send({
+        name: 'Other Reporter',
+        email: 'other.reporter@example.com',
+        password: 'password',
+      })
+      .expect(201);
+    const other = await signIn(app, 'other.reporter@example.com');
+
+    const hidden = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${other.token}`)
+      .expect(404);
+
+    expect(hidden.body.message).toBe('Ticket not found');
+  });
+
+  it('returns the thread with canComment false after the ticket is resolved', async () => {
+    const { reporter, technician, admin, ticket } = await filedTicket(app);
+    await assignAndResolve(app, ticket.id, {
+      adminToken: admin.token,
+      technicianToken: technician.token,
+      assigneeId: technician.user.id,
+    });
+
+    const thread = await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .set('Authorization', `Bearer ${reporter.token}`)
+      .expect(200);
+
+    expect(thread.body).toEqual({ comments: [], canComment: false });
+  });
+
+  it('refuses a comment thread request with no token', async () => {
+    const { ticket } = await filedTicket(app);
+
+    await request(app.getHttpServer())
+      .get(`/api/tickets/${ticket.id}/comments`)
+      .expect(401);
+  });
 });
 
 async function signIn(app: INestApplication, email: string) {

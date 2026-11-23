@@ -10,6 +10,7 @@ import { AssignTicketDto } from './dto/assign-ticket.dto.js';
 import { CreateTicketDto } from './dto/create-ticket.dto.js';
 import { TicketListQuery } from './dto/list-tickets.query.js';
 import { UpdateTicketStatusDto } from './dto/update-ticket-status.dto.js';
+import { canComment } from './comment-access.js';
 import {
   nextAction,
   transitionStatus,
@@ -42,6 +43,18 @@ const ticketSelect = {
 } as const;
 
 type Person = { id: number; name: string };
+
+type PublicComment = {
+  id: number;
+  body: string;
+  createdAt: string;
+  author: { id: number; name: string };
+};
+
+type CommentThread = {
+  comments: PublicComment[];
+  canComment: boolean;
+};
 
 type StoredTicket = {
   id: number;
@@ -216,6 +229,46 @@ export class TicketsService {
         tickets.map((ticket) => this.toPublicTicket(ticket, user)),
       ),
       total,
+    };
+  }
+
+  async comments(user: AuthUser, id: number): Promise<CommentThread> {
+    const ticket = await this.prisma.ticket.findUnique({
+      where: { id },
+      select: {
+        status: true,
+        reporter: { select: person },
+        assignee: { select: person },
+        comments: {
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            body: true,
+            createdAt: true,
+            author: { select: person },
+          },
+        },
+      },
+    });
+    if (!ticket || !canSee(user, ticket)) {
+      throw new NotFoundException('Ticket not found');
+    }
+
+    return {
+      comments: ticket.comments.map((comment) => ({
+        id: comment.id,
+        body: comment.body,
+        createdAt: comment.createdAt.toISOString(),
+        author: comment.author,
+      })),
+      canComment: canComment(
+        {
+          status: ticket.status,
+          creatorId: ticket.reporter.id,
+          assigneeId: ticket.assignee?.id ?? null,
+        },
+        user,
+      ),
     };
   }
 
